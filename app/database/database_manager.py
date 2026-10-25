@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
-
+from contextlib import contextmanager
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_PATH = PROJECT_ROOT / "network_healing.db"
@@ -14,14 +14,27 @@ def current_time():
 class DatabaseManager:
     """Persist alarm records and incident events using SQLite."""
 
+    def close(self):
+        """Close any resources if needed."""
+        pass
+
     def __init__(self, database_path=DATABASE_PATH):
         self.database_path = str(database_path)
         self.initialize_database()
 
+    @contextmanager
     def get_connection(self):
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
-        return connection
+
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def initialize_database(self):
         """Create the required tables if they do not exist."""
