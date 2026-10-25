@@ -39,6 +39,11 @@ class MonitoringController:
             print("\n[RECOVERY] Attempting service recovery...")
 
             recovery_result = self.recovery_manager.recover()
+            self.alarm_manager.record_recovery(
+                target=target,
+                success=recovery_result["success"],
+                duration=recovery_result["recovery_time_seconds"],
+            )
 
             print(f"[RECOVERY] {recovery_result['message']}")
             print(
