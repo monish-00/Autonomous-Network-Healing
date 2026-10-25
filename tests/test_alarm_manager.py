@@ -1,64 +1,59 @@
 import tempfile
+import unittest
 from pathlib import Path
 
 from app.database.database_manager import DatabaseManager
 from app.fault_management.alarm_manager import AlarmManager
 
 
-def main():
-    # Use a temporary database so previous application data
-    # cannot interfere with this test.
-    with tempfile.TemporaryDirectory() as temp_dir:
-        test_db_path = Path(temp_dir) / "test_network_healing.db"
+class AlarmManagerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory(dir=Path(__file__).parent)
+        self.manager = AlarmManager(
+            DatabaseManager(Path(self.temp_dir.name) / "isolated.db")
+        )
+        self.target = "127.0.0.1:8080"
 
-        # Replace the alarm manager's database with an isolated test database.
-        manager = AlarmManager.__new__(AlarmManager)
-        manager.database = DatabaseManager(test_db_path)
-        manager.alarms = {}
+    def tearDown(self):
+        self.temp_dir.cleanup()
 
-        target = "127.0.0.1:8080"
+    def test_alarm_creation_repeated_failures_and_resolution(self):
+        manager, target = self.manager, self.target
+        manager.process_status(target, "UP")
+        self.assertEqual(manager.get_active_alarms(), [])
 
-        print("\n=== TEST 1: SERVICE IS HEALTHY ===")
+        manager.process_status(target, "DOWN", details="HTTP failed")
+        manager.process_status(target, "DOWN", details="HTTP failed again")
+        self.assertEqual(len(manager.get_active_alarms()), 1)
+        self.assertEqual(manager.get_active_alarms()[0]["occurrences"], 2)
+
+        manager.process_status(target, "UP")
+        row = manager.get_all_alarms()[0]
+        self.assertEqual(row["status"], "RESOLVED")
+        self.assertEqual(row["occurrences"], 2)
+
+    def test_recovery_duration_and_success_persist(self):
+        manager, target = self.manager, self.target
+        manager.process_status(target, "DOWN", details="HTTP failed")
+        manager.record_recovery(target, True, 2.537)
         manager.process_status(target, "UP")
 
-        print("\n=== TEST 2: SERVICE FAILS ===")
-        manager.process_status(
-            target,
-            "DOWN",
-            details="Connection refused",
-        )
+        row = manager.get_all_alarms()[0]
+        self.assertEqual(row["status"], "RESOLVED")
+        self.assertEqual(row["recovery_success"], 1)
+        self.assertAlmostEqual(row["recovery_duration"], 2.537)
 
-        assert len(manager.get_active_alarms()) == 1
-        print("PASS: Alarm created.")
+    def test_failed_recovery_is_persisted_and_alarm_stays_active(self):
+        manager, target = self.manager, self.target
+        manager.process_status(target, "DOWN", details="HTTP failed")
+        manager.record_recovery(target, False, 5)
 
-        print("\n=== TEST 3: SERVICE REMAINS DOWN ===")
-        manager.process_status(
-            target,
-            "DOWN",
-            details="Connection refused",
-        )
-
-        active_alarms = manager.get_active_alarms()
-        assert len(active_alarms) == 1
-        assert active_alarms[0]["occurrences"] == 2
-        print("PASS: Existing alarm updated.")
-
-        print("\n=== TEST 4: SERVICE RECOVERS ===")
-        manager.process_status(target, "UP")
-
-        assert len(manager.get_active_alarms()) == 0
-        print("PASS: Alarm resolved.")
-
-        print("\n=== TEST 5: DATABASE VALIDATION ===")
-        all_alarms = manager.get_all_alarms()
-
-        assert len(all_alarms) == 1
-        assert all_alarms[0]["status"] == "RESOLVED"
-        assert all_alarms[0]["occurrences"] == 2
-
-        print("PASS: Alarm history persisted.")
-        print("\nALL TESTS PASSED!")
+        row = manager.get_all_alarms()[0]
+        self.assertEqual(row["status"], "ACTIVE")
+        self.assertEqual(row["recovery_success"], 0)
+        self.assertAlmostEqual(row["recovery_duration"], 5.0)
+        self.assertEqual(len(manager.get_active_alarms()), 1)
 
 
 if __name__ == "__main__":
-    main()
+    unittest.main()

@@ -158,49 +158,65 @@ class DatabaseManager:
     def resolve_alarm(
         self,
         alarm_id,
-        recovery_success=True,
+        recovery_success=None,
         recovery_duration=None,
     ):
-        """Resolve an active alarm and record its recovery outcome."""
-
+        """Resolve an alarm and preserve recovery information."""
         timestamp = current_time()
 
         with self.get_connection() as connection:
-            cursor = connection.execute("""
+            row = connection.execute(
+                """
+                SELECT target, recovery_success, recovery_duration
+                FROM alarms
+                WHERE id = ? AND status = 'ACTIVE'
+                """,
+                (alarm_id,),
+            ).fetchone()
+
+            if row is None:
+                return
+
+            # Preserve values already recorded by record_recovery()
+            # when the caller doesn't provide them.
+            if recovery_success is None:
+                recovery_success = row["recovery_success"]
+
+            if recovery_duration is None:
+                recovery_duration = row["recovery_duration"]
+
+            connection.execute(
+                """
                 UPDATE alarms
                 SET status = 'RESOLVED',
                     resolved_at = ?,
                     recovery_success = ?,
                     recovery_duration = ?
                 WHERE id = ? AND status = 'ACTIVE'
-            """, (
-                timestamp,
-                int(recovery_success),
-                recovery_duration,
-                alarm_id,
-            ))
+                """,
+                (
+                    timestamp,
+                    None if recovery_success is None else int(recovery_success),
+                    recovery_duration,
+                    alarm_id,
+                ),
+            )
 
-            if cursor.rowcount:
-                row = connection.execute("""
-                    SELECT target FROM alarms WHERE id = ?
-                """, (alarm_id,)).fetchone()
-
-                connection.execute("""
-                    INSERT INTO incident_events (
-                        alarm_id,
-                        target,
-                        event_type,
-                        description,
-                        timestamp
-                    )
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
+            connection.execute(
+                """
+                INSERT INTO incident_events
+                    (alarm_id, target, event_type, description, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
                     alarm_id,
                     row["target"],
                     "ALARM_RESOLVED",
                     "Service recovered and alarm resolved",
                     timestamp,
-                ))
+                ),
+            )
+
 
     def get_active_alarms(self):
         with self.get_connection() as connection:

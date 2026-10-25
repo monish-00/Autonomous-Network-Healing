@@ -27,7 +27,14 @@ class AlarmManager:
     def current_time():
         return datetime.now(timezone.utc).isoformat()
 
-    def process_status(self, target, status, details=None):
+    def process_status(
+        self,
+        target,
+        status,
+        details=None,
+        recovery_success=None,
+        recovery_duration=None,
+    ):
         """Create, update, or resolve an alarm based on service status."""
 
         if status not in ("UP", "DOWN"):
@@ -74,14 +81,17 @@ class AlarmManager:
 
         else:
             if target in self.alarms:
-                alarm = self.alarms.pop(target)
+                alarm = self.alarms[target]
                 alarm["status"] = "RESOLVED"
                 alarm["resolved_at"] = self.current_time()
 
                 self.database.resolve_alarm(
                     alarm_id=alarm["id"],
-                    recovery_success=True,
+                    recovery_success=recovery_success,
+                    recovery_duration=recovery_duration,
                 )
+
+                self.alarms.pop(target, None)
 
                 print(f"[ALARM RESOLVED] {target} is UP")
                 return alarm
@@ -91,24 +101,21 @@ class AlarmManager:
         return self.alarms.get(target)
 
     def record_recovery(self, target, success, duration):
-        """Record a recovery result for an active alarm."""
-
+        """Persist the outcome and duration of a recovery attempt."""
         alarm = self.alarms.get(target)
-
         if alarm is None:
             return
 
-        # Store the recovery outcome without resolving the alarm.
         with self.database.get_connection() as connection:
             connection.execute(
                 """
                 UPDATE alarms
-                SET recovery_success = ?,
-                    recovery_duration = ?
+                SET recovery_success = ?, recovery_duration = ?
                 WHERE id = ? AND status = 'ACTIVE'
                 """,
-                (int(success), duration, alarm["id"]),
+                (int(bool(success)), float(duration), alarm["id"]),
             )
+
 
     def get_active_alarms(self):
         """Return all currently active alarms."""
