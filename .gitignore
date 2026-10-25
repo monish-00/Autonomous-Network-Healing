@@ -1,4 +1,4 @@
-# Python virtual environment
+# Python virtual environments
 .venv/
 venv/
 
@@ -15,10 +15,18 @@ __pycache__/
 logs/
 *.log
 
+# SQLite database files (local runtime data)
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
 # Test and coverage artifacts
 .pytest_cache/
 .coverage
 htmlcov/
+coverage.xml
 
 # IDE and operating system files
 .vscode/
@@ -26,5 +34,14 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-#Personal files
+# Personal files
 personal/
+
+# Build and distribution artifacts
+build/
+dist/
+*.egg-info/
+
+# Temporary files
+*.tmp
+*.bak
