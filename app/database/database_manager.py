@@ -1,10 +1,13 @@
 import sqlite3
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import contextmanager
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATABASE_PATH = PROJECT_ROOT / "network_healing.db"
+DATABASE_PATH = Path(
+    os.environ.get("NETWORK_HEALING_DB", PROJECT_ROOT / "network_healing.db")
+)
 
 
 def current_time():
@@ -13,10 +16,6 @@ def current_time():
 
 class DatabaseManager:
     """Persist alarm records and incident events using SQLite."""
-
-    def close(self):
-        """Close any resources if needed."""
-        pass
 
     def __init__(self, database_path=DATABASE_PATH):
         self.database_path = str(database_path)
@@ -28,6 +27,7 @@ class DatabaseManager:
         connection.row_factory = sqlite3.Row
 
         try:
+            connection.execute("PRAGMA foreign_keys = ON")
             yield connection
             connection.commit()
         except Exception:
@@ -80,6 +80,18 @@ class DatabaseManager:
         timestamp = current_time()
 
         with self.get_connection() as connection:
+            existing = connection.execute(
+                """
+                SELECT id FROM alarms
+                WHERE target = ? AND status = 'ACTIVE'
+                ORDER BY id
+                LIMIT 1
+                """,
+                (target,),
+            ).fetchone()
+            if existing is not None:
+                return existing["id"]
+
             cursor = connection.execute("""
                 INSERT INTO alarms (
                     target,
@@ -246,6 +258,37 @@ class DatabaseManager:
             """, (limit,)).fetchall()
 
             return [dict(row) for row in rows]
+
+    def get_dashboard_summary(self, event_limit=10, alarm_limit=10):
+        """Return read-only alarm and event summaries for the dashboard."""
+        with self.get_connection() as connection:
+            counts = connection.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_alarms,
+                    SUM(CASE WHEN recovery_success = 1 THEN 1 ELSE 0 END) AS recovery_successes,
+                    SUM(CASE WHEN recovery_success = 0 THEN 1 ELSE 0 END) AS recovery_failures,
+                    AVG(CASE WHEN recovery_duration IS NOT NULL THEN recovery_duration END) AS average_recovery_duration
+                FROM alarms
+                """
+            ).fetchone()
+            alarms = connection.execute(
+                "SELECT * FROM alarms ORDER BY first_seen DESC, id DESC LIMIT ?",
+                (alarm_limit,),
+            ).fetchall()
+            events = connection.execute(
+                "SELECT * FROM incident_events ORDER BY timestamp DESC, id DESC LIMIT ?",
+                (event_limit,),
+            ).fetchall()
+
+        return {
+            "active_alarm_count": counts["active_alarms"] or 0,
+            "recovery_success_count": counts["recovery_successes"] or 0,
+            "recovery_failure_count": counts["recovery_failures"] or 0,
+            "average_recovery_duration": counts["average_recovery_duration"],
+            "alarms": [dict(row) for row in alarms],
+            "events": [dict(row) for row in events],
+        }
 
 
 if __name__ == "__main__":

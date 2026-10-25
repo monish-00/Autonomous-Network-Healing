@@ -82,15 +82,14 @@ class AlarmManager:
         else:
             if target in self.alarms:
                 alarm = self.alarms[target]
-                alarm["status"] = "RESOLVED"
-                alarm["resolved_at"] = self.current_time()
-
                 self.database.resolve_alarm(
                     alarm_id=alarm["id"],
                     recovery_success=recovery_success,
                     recovery_duration=recovery_duration,
                 )
 
+                alarm["status"] = "RESOLVED"
+                alarm["resolved_at"] = self.current_time()
                 self.alarms.pop(target, None)
 
                 print(f"[ALARM RESOLVED] {target} is UP")

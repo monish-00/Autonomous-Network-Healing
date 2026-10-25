@@ -5,6 +5,27 @@ from datetime import datetime, timezone
 import requests
 
 
+def classify_fault(error=None, http_status_code=None, response_body=None):
+    """Return a transparent rule-based label for a failed health check."""
+    if http_status_code is not None:
+        if http_status_code != 200:
+            return "HTTP_ERROR"
+        if not isinstance(response_body, dict):
+            return "INVALID_HEALTH_RESPONSE"
+        if response_body.get("status") != "healthy":
+            return "UNHEALTHY_RESPONSE"
+        return None
+
+    message = str(error or "").lower()
+    if "timed out" in message or "timeout" in message:
+        return "TIMEOUT"
+    if "refused" in message:
+        return "CONNECTION_REFUSED"
+    if error:
+        return "CONNECTION_ERROR"
+    return None
+
+
 def check_host(host: str, port: int, timeout: float = 3.0) -> dict:
     """Check whether a TCP service is reachable."""
 
@@ -22,6 +43,7 @@ def check_host(host: str, port: int, timeout: float = 3.0) -> dict:
                 "response_time_ms": round(response_time_ms, 2),
                 "checked_at": checked_at,
                 "error": None,
+                "fault_type": None,
             }
 
     except (OSError, TimeoutError) as exc:
@@ -34,6 +56,7 @@ def check_host(host: str, port: int, timeout: float = 3.0) -> dict:
             "response_time_ms": round(response_time_ms, 2),
             "checked_at": checked_at,
             "error": str(exc),
+                "fault_type": classify_fault(exc),
         }
 
 
@@ -59,10 +82,12 @@ def check_http_health(
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
 
+        json_valid = True
         try:
             body = response.json()
         except ValueError:
             body = {}
+            json_valid = False
 
         healthy = (
             response.status_code == 200
@@ -79,6 +104,11 @@ def check_http_health(
             "response_time_ms": round(response_time_ms, 2),
             "checked_at": checked_at,
             "error": None if healthy else "HTTP health check failed",
+            "fault_type": None if healthy else (
+                "HTTP_ERROR" if response.status_code != 200 else
+                "INVALID_HEALTH_RESPONSE" if not json_valid or not isinstance(body, dict) else
+                "UNHEALTHY_RESPONSE"
+            ),
         }
 
     except requests.RequestException as exc:
@@ -93,6 +123,7 @@ def check_http_health(
             "response_time_ms": round(response_time_ms, 2),
             "checked_at": checked_at,
             "error": str(exc),
+            "fault_type": classify_fault(exc),
         }
 
 

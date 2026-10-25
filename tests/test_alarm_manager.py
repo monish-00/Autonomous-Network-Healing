@@ -31,6 +31,12 @@ class AlarmManagerTests(unittest.TestCase):
         row = manager.get_all_alarms()[0]
         self.assertEqual(row["status"], "RESOLVED")
         self.assertEqual(row["occurrences"], 2)
+        event_types = {event["event_type"] for event in self.manager.database.get_event_history()}
+        self.assertEqual(event_types, {"ALARM_CREATED", "ALARM_UPDATED", "ALARM_RESOLVED"})
+        self.assertEqual(
+            {event["alarm_id"] for event in self.manager.database.get_event_history()},
+            {row["id"]},
+        )
 
     def test_recovery_duration_and_success_persist(self):
         manager, target = self.manager, self.target
@@ -53,6 +59,13 @@ class AlarmManagerTests(unittest.TestCase):
         self.assertEqual(row["recovery_success"], 0)
         self.assertAlmostEqual(row["recovery_duration"], 5.0)
         self.assertEqual(len(manager.get_active_alarms()), 1)
+
+    def test_database_does_not_create_duplicate_active_alarm(self):
+        database = self.manager.database
+        first_id = database.create_alarm(self.target, details="first failure")
+        duplicate_id = database.create_alarm(self.target, details="repeat")
+        self.assertEqual(first_id, duplicate_id)
+        self.assertEqual(len(database.get_active_alarms()), 1)
 
 
 if __name__ == "__main__":

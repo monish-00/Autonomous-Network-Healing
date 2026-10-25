@@ -2,6 +2,8 @@ import socket
 import subprocess
 import sys
 import time
+import os
+import ipaddress
 from pathlib import Path
 
 
@@ -32,8 +34,25 @@ class ServiceRecovery:
 
         if self.is_service_running():
             return {
-                "success": True,
-                "message": "Service is already running.",
+                "success": False,
+                "message": (
+                    "The TCP port is reachable, so the controlled test "
+                    "service was not restarted. Application health must be "
+                    "verified over HTTP."
+                ),
+            }
+
+        try:
+            local_target = self.host == "localhost" or ipaddress.ip_address(
+                self.host
+            ).is_loopback
+        except ValueError:
+            local_target = False
+
+        if not local_target:
+            return {
+                "success": False,
+                "message": "Automatic recovery supports only a local test service.",
             }
 
         service_file = (
@@ -43,11 +62,15 @@ class ServiceRecovery:
             / "test_service.py"
         )
 
+        service_env = os.environ.copy()
+        service_env["TEST_SERVICE_HOST"] = "127.0.0.1"
+        service_env["TEST_SERVICE_PORT"] = str(self.port)
         self.process = subprocess.Popen(
             [sys.executable, str(service_file)],
             cwd=str(PROJECT_ROOT),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=service_env,
         )
 
         # Wait briefly for the service to become available.
@@ -68,6 +91,14 @@ class ServiceRecovery:
 
             time.sleep(0.25)
 
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+
         return {
             "success": False,
             "message": "Service did not become available in time.",
@@ -79,10 +110,15 @@ class ServiceRecovery:
         start_time = time.perf_counter()
 
         if self.is_service_running():
+            recovery_time = time.perf_counter() - start_time
             return {
-                "success": True,
-                "recovery_time_seconds": 0.0,
-                "message": "No recovery needed; service is healthy.",
+                "success": False,
+                "recovery_time_seconds": round(recovery_time, 3),
+                "message": (
+                    "Recovery could not restart the service because its TCP "
+                    "port is already reachable; HTTP health remains the "
+                    "controller's verification signal."
+                ),
             }
 
         result = self.start_service()
@@ -92,7 +128,12 @@ class ServiceRecovery:
         return {
             "success": result["success"],
             "recovery_time_seconds": round(recovery_time, 3),
-            "message": result["message"],
+            "message": (
+                "Test service process started and its TCP port is reachable; "
+                "awaiting HTTP health verification."
+                if result["success"]
+                else result["message"]
+            ),
         }
 
 

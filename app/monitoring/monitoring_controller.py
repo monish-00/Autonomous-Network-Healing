@@ -1,3 +1,5 @@
+import os
+
 from app.monitoring.network_monitor import check_host, check_http_health
 from app.fault_management.alarm_manager import AlarmManager
 from app.recovery.service_recovery import ServiceRecovery
@@ -6,10 +8,12 @@ from app.recovery.service_recovery import ServiceRecovery
 class MonitoringController:
     """Coordinate monitoring, alarm management, and recovery."""
 
-    def __init__(self, host="127.0.0.1", port=8080):
-        self.host = host
-        self.port = port
-        self.alarm_manager = AlarmManager()
+    def __init__(self, host=None, port=None, database=None):
+        self.host = host or os.environ.get("MONITOR_HOST", "127.0.0.1")
+        self.port = int(port or os.environ.get("MONITOR_PORT", "8080"))
+        self.health_path = os.environ.get("HEALTH_PATH", "/health")
+        self.timeout = float(os.environ.get("CHECK_TIMEOUT_SECONDS", "3"))
+        self.alarm_manager = AlarmManager(database=database)
         self.recovery_manager = ServiceRecovery(host, port)
 
     def check_target(self):
@@ -21,11 +25,16 @@ class MonitoringController:
         print(f"Checking target: {target}")
 
         # Step 1: Check TCP connectivity.
-        tcp_result = check_host(self.host, self.port)
+        tcp_result = check_host(self.host, self.port, timeout=self.timeout)
         print(f"\n[TCP CHECK] Status: {tcp_result['status']}")
 
         # Step 2: Check actual application health.
-        result = check_http_health(self.host, self.port)
+        result = check_http_health(
+            self.host,
+            self.port,
+            path=self.health_path,
+            timeout=self.timeout,
+        )
 
         print(f"[HTTP CHECK] Status: {result['status']}")
         print(f"[HTTP CHECK] URL: {result['url']}")
@@ -37,7 +46,11 @@ class MonitoringController:
         self.alarm_manager.process_status(
             target=target,
             status=result["status"],
-            details=result.get("error"),
+            details=(
+                f"{result.get('fault_type')}: {result.get('error')}"
+                if result.get("fault_type") and result.get("error")
+                else result.get("error") or result.get("fault_type")
+            ),
         )
 
         recovery_result = None
@@ -55,10 +68,15 @@ class MonitoringController:
             )
 
             # Step 5: Verify actual application health after recovery.
-            verified = check_http_health(self.host, self.port)
+            verified = check_http_health(
+                self.host,
+                self.port,
+                path=self.health_path,
+                timeout=self.timeout,
+            )
 
             # Recheck TCP connectivity after the recovery attempt.
-            tcp_verified = check_host(self.host, self.port)
+            tcp_verified = check_host(self.host, self.port, timeout=self.timeout)
             tcp_result = tcp_verified
 
             print(f"[VERIFICATION] TCP status: {tcp_verified['status']}")
@@ -67,6 +85,12 @@ class MonitoringController:
             recovery_succeeded = bool(recovery_result["success"]) and (
                 verified["status"] == "UP"
             )
+            recovery_result = {
+                **recovery_result,
+                "attempt_success": bool(recovery_result["success"]),
+                "http_verified": verified["status"] == "UP",
+                "success": recovery_succeeded,
+            }
             self.alarm_manager.record_recovery(
                 target=target,
                 success=recovery_succeeded,

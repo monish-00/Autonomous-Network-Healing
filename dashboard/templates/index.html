@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autonomous Network Healing</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div>
+        <p class="eyebrow">NETWORK OPERATIONS</p>
+        <h1>Autonomous Network Healing</h1>
+        <p class="muted">Target: {{ target }}</p>
+      </div>
+      <form action="{{ url_for('manual_check') }}" method="post">
+        <input type="hidden" name="form_token" value="{{ form_token }}">
+        <button type="submit">Run check and recovery</button>
+      </form>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="notice {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <section class="cards" aria-label="Current service health">
+      <article class="card">
+        <p class="eyebrow">TCP CONNECTIVITY</p>
+        <h2 class="{{ 'up' if tcp.status == 'UP' else 'down' }}">{{ tcp.status }}</h2>
+        <p>Response time: {{ tcp.response_time_ms }} ms</p>
+        {% if tcp.error %}<p class="error">{{ tcp.fault_type }} · {{ tcp.error }}</p>{% endif %}
+      </article>
+      <article class="card">
+        <p class="eyebrow">HTTP APPLICATION HEALTH</p>
+        <h2 class="{{ 'up' if http.status == 'UP' else 'down' }}">{{ http.status }}</h2>
+        <p>HTTP code: {{ http.http_status_code if http.http_status_code is not none else '—' }}</p>
+        <p>Response time: {{ http.response_time_ms }} ms</p>
+        {% if http.error %}<p class="error">{{ http.fault_type }} · {{ http.error }}</p>{% endif %}
+      </article>
+    </section>
+
+    <section class="cards metrics" aria-label="Incident and recovery metrics">
+      <article class="metric"><span>Active alarms</span><strong>{{ summary.active_alarm_count }}</strong></article>
+      <article class="metric"><span>Recovery successes</span><strong>{{ summary.recovery_success_count }}</strong></article>
+      <article class="metric"><span>Recovery failures</span><strong>{{ summary.recovery_failure_count }}</strong></article>
+      <article class="metric"><span>Average recovery time</span><strong>{{ '%.3f s'|format(summary.average_recovery_duration) if summary.average_recovery_duration is not none else '—' }}</strong></article>
+    </section>
+
+    <section class="panel">
+      <h2>Recent alarms</h2>
+      {% if summary.alarms %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Target</th><th>Status</th><th>Severity</th><th>Occurrences</th><th>Recovery</th><th>Duration</th><th>Details</th></tr></thead>
+        <tbody>{% for alarm in summary.alarms %}
+          <tr><td>{{ alarm.target }}</td><td>{{ alarm.status }}</td><td>{{ alarm.severity }}</td><td>{{ alarm.occurrences }}</td>
+          <td>{{ 'Success' if alarm.recovery_success == 1 else 'Failure' if alarm.recovery_success == 0 else '—' }}</td>
+          <td>{{ '%.3f s'|format(alarm.recovery_duration) if alarm.recovery_duration is not none else '—' }}</td><td>{{ alarm.details or '—' }}</td></tr>
+        {% endfor %}</tbody>
+      </table></div>
+      {% else %}<p class="muted">No alarms recorded yet.</p>{% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Recent incident events</h2>
+      {% if summary.events %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Time (UTC)</th><th>Target</th><th>Event</th><th>Description</th></tr></thead>
+        <tbody>{% for event in summary.events %}
+          <tr><td>{{ event.timestamp }}</td><td>{{ event.target }}</td><td>{{ event.event_type }}</td><td>{{ event.description or '—' }}</td></tr>
+        {% endfor %}</tbody>
+      </table></div>
+      {% else %}<p class="muted">No incident events recorded yet.</p>{% endif %}
+    </section>
+    <footer>Refresh reads current health and history. Automatic recovery runs only after the manual action is submitted.</footer>
+  </main>
+</body>
+</html>
